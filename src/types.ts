@@ -60,6 +60,34 @@ export type OneBotSendMsgResult = {
   message_id: number;
 };
 
+/** Keyword trigger rule as provided in config (fields optional; normalized at runtime). */
+export type KeywordTriggerInput = {
+  /** Rule name (unique identifier). */
+  name?: string;
+  /** Match type. Defaults to "contains". */
+  type?: "exact" | "prefix" | "suffix" | "contains" | "regex";
+  /** Keyword / pattern to match. */
+  pattern: string;
+  /** Action on match. Defaults to "passthrough". */
+  action?: "passthrough" | "block" | "command";
+  /** Command string to substitute when action="command". */
+  command?: string;
+  /** Case-sensitive match. Defaults to false. */
+  caseSensitive?: boolean;
+  /** Enable this rule. Defaults to true. */
+  enabled?: boolean;
+};
+
+/** Keyword trigger configuration block for a NapCat account. */
+export type KeywordTriggerConfigInput = {
+  /** Ordered list of keyword rules. */
+  triggers?: KeywordTriggerInput[];
+  /** Action when no rule matches. Defaults to "passthrough". */
+  defaultAction?: "passthrough" | "block";
+  /** Blocklist words; any match blocks the message. */
+  blocklist?: string[];
+};
+
 /** NapCat account configuration in openclaw.json. */
 export type NapCatAccountConfig = {
   /** Display name for this account. */
@@ -84,6 +112,14 @@ export type NapCatAccountConfig = {
   mediaMaxMb?: number;
   /** Outbound response prefix. */
   responsePrefix?: string;
+  /** Keyword trigger rules (block / command / passthrough-strip). */
+  keywordTriggers?: KeywordTriggerConfigInput;
+  /**
+   * Group-chat activation keywords. In group chats a message is normally only
+   * handled when it @mentions the bot; if the message contains any of these
+   * keywords it is treated as if the bot was mentioned (case-insensitive).
+   */
+  keywordMention?: string[];
 };
 
 export type NapCatConfig = {

@@ -21,6 +21,35 @@ export const NapCatChannelConfigSchema = {
       },
       mediaMaxMb: { type: "number" },
       responsePrefix: { type: "string" },
+      keywordTriggers: {
+        type: "object",
+        properties: {
+          triggers: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                type: { type: "string", enum: ["exact", "prefix", "suffix", "contains", "regex"] },
+                pattern: { type: "string" },
+                action: { type: "string", enum: ["passthrough", "block", "command"] },
+                command: { type: "string" },
+                caseSensitive: { type: "boolean" },
+                enabled: { type: "boolean" },
+              },
+              required: ["pattern"],
+              additionalProperties: false,
+            },
+          },
+          defaultAction: { type: "string", enum: ["passthrough", "block"] },
+          blocklist: { type: "array", items: { type: "string" } },
+        },
+        additionalProperties: false,
+      },
+      keywordMention: {
+        type: "array",
+        items: { type: "string" },
+      },
       accounts: {
         type: "object",
         additionalProperties: true,
@@ -67,6 +96,15 @@ export const NapCatChannelConfigSchema = {
     responsePrefix: {
       label: "回复前缀",
       advanced: true,
+    },
+    keywordTriggers: {
+      label: "关键字触发",
+      help: "关键字触发规则：block 拦截、command 映射为命令、passthrough 去除触发词后放行；blocklist 为敏感词黑名单",
+      advanced: true,
+    },
+    keywordMention: {
+      label: "群聊唤醒词",
+      help: "群聊中，消息含这些关键词之一即视为 @机器人（与 @机器人 并行生效，不区分大小写）",
     },
   },
 } as const;

@@ -222,6 +222,7 @@ Add to your OpenClaw config (`openclaw config edit`):
 | `groupAllowFrom` | Allowed QQ numbers in groups (falls back to `allowFrom`) | `[]` |
 | `mediaMaxMb` | Max inbound media file size in MB | `5` |
 | `responsePrefix` | Prefix for AI reply messages (optional) | - |
+| `keywordMention` | Group activation keywords; a message containing any of them counts as an @mention (case-insensitive) | `[]` |
 | `enabled` | Enable/disable this account | `true` |
 
 **Important:** Set `tools.profile` to `"full"` in your OpenClaw config, otherwise `qq_*` tools will be filtered out by the default `"coding"` profile.

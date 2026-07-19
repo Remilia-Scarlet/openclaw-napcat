@@ -9,7 +9,7 @@ import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { resolveDirectDmAuthorizationOutcome, resolveSenderCommandAuthorizationWithRuntime } from "openclaw/plugin-sdk/command-auth";
 import { resolveOutboundMediaUrls } from "openclaw/plugin-sdk/reply-payload";
 import { resolveDefaultGroupPolicy } from "openclaw/plugin-sdk/config-runtime";
-import { resolveInboundRouteEnvelopeBuilderWithRuntime } from "openclaw/plugin-sdk/googlechat";
+import { resolveInboundRouteEnvelopeBuilderWithRuntime } from "openclaw/plugin-sdk/inbound-envelope";
 import { waitUntilAbort } from "openclaw/plugin-sdk/channel-lifecycle";
 import { issuePairingChallenge } from "openclaw/plugin-sdk/conversation-runtime";
 
@@ -52,6 +52,7 @@ import type { ResolvedNapCatAccount } from "./types.js";
 import type { OneBotMessageEvent, OneBotSegment } from "./types.js";
 import { sendGroupMsg, sendPrivateMsg, textSegment, replySegment, recordSegment, videoSegment, uploadGroupFile, uploadPrivateFile, getMsg } from "./api.js";
 import { getNapCatRuntime } from "./runtime.js";
+import { KeywordTriggerEngine } from "./features/keyword-trigger.js";
 
 export type NapCatRuntimeEnv = {
   log?: (message: string) => void;
@@ -71,6 +72,45 @@ export type NapCatMonitorOptions = {
 type NapCatCoreRuntime = ReturnType<typeof getNapCatRuntime>;
 
 const QQ_TEXT_LIMIT = 4500;
+
+/**
+ * Per-account keyword engine cache. Rebuilt when the account's keywordTriggers
+ * config object identity changes (e.g. on hot reload).
+ */
+const keywordEngineCache = new Map<string, { source: unknown; engine: KeywordTriggerEngine }>();
+
+/** Build (or reuse) the keyword trigger engine for an account, or null if not configured. */
+function getKeywordEngine(account: ResolvedNapCatAccount): KeywordTriggerEngine | null {
+  const kw = account.config.keywordTriggers;
+  if (!kw) return null;
+
+  const triggers = kw.triggers ?? [];
+  const blocklist = kw.blocklist ?? [];
+  const defaultAction = kw.defaultAction ?? "passthrough";
+  const hasRules = triggers.length > 0 || blocklist.length > 0 || defaultAction === "block";
+  if (!hasRules) return null;
+
+  const cached = keywordEngineCache.get(account.accountId);
+  if (cached && cached.source === kw) return cached.engine;
+
+  const engine = new KeywordTriggerEngine({
+    triggers: triggers
+      .filter((t) => t && t.pattern)
+      .map((t) => ({
+        name: t.name ?? t.pattern,
+        type: t.type ?? "contains",
+        pattern: t.pattern,
+        action: t.action ?? "passthrough",
+        command: t.command,
+        caseSensitive: t.caseSensitive ?? false,
+        enabled: t.enabled !== false,
+      })),
+    defaultAction,
+    blocklist,
+  });
+  keywordEngineCache.set(account.accountId, { source: kw, engine });
+  return engine;
+}
 
 /** Extract the reply message ID from segments (if any). */
 function extractReplyMessageId(segments: OneBotSegment[]): number | undefined {
@@ -206,6 +246,18 @@ function hasBotMention(segments: OneBotSegment[], selfId: string): boolean {
   );
 }
 
+/**
+ * Check whether the message text contains any of the configured activation
+ * keywords (case-insensitive). In group chats this acts as an alternative to an
+ * @bot mention for deciding whether to handle the message.
+ */
+function hasTriggerKeyword(segments: OneBotSegment[], keywords?: string[]): boolean {
+  if (!keywords || keywords.length === 0) return false;
+  const text = extractText(segments).toLowerCase();
+  if (!text) return false;
+  return keywords.some((k) => k && text.includes(k.toLowerCase()));
+}
+
 /** Strip @bot mention segments and leading whitespace from text. */
 function stripBotMention(segments: OneBotSegment[], selfId: string): OneBotSegment[] {
   return segments.filter(
@@ -313,8 +365,12 @@ async function processMessage(
   const chatId = isGroup ? String(event.group_id) : senderId;
   const selfId = account.selfId || String(event.self_id);
 
-  // In group chats, require @bot mention
-  if (isGroup && !hasBotMention(event.message, selfId)) {
+  // In group chats, require an @bot mention OR one of the configured activation keywords.
+  if (
+    isGroup &&
+    !hasBotMention(event.message, selfId) &&
+    !hasTriggerKeyword(event.message, account.config.keywordMention)
+  ) {
     return;
   }
 
@@ -324,6 +380,25 @@ async function processMessage(
     : event.message;
 
   let text = extractText(cleanSegments);
+
+  // Keyword trigger filtering: drop blocked messages, strip trigger words, or map to a command.
+  const keywordEngine = getKeywordEngine(account);
+  if (keywordEngine && text) {
+    const kw = keywordEngine.match(text);
+    if (kw.blockMessage) {
+      runtime.log?.(`[${account.accountId}] keyword filter blocked message from ${senderId}`);
+      return;
+    }
+    if (kw.matched && kw.trigger) {
+      if (kw.trigger.action === "command" && kw.trigger.command) {
+        text = kw.trigger.command;
+      } else if (kw.trigger.action === "passthrough" && kw.remainingText) {
+        // Strip the trigger keyword; keep original text when nothing remains (e.g. exact activation words).
+        text = kw.remainingText;
+      }
+    }
+  }
+
   const imageUrls = extractImageUrls(cleanSegments);
   const recordUrl = extractRecordUrl(cleanSegments);
 

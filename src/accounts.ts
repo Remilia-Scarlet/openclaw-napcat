@@ -38,6 +38,8 @@ function mergeNapCatAccountConfig(
     groupAllowFrom: section.groupAllowFrom,
     mediaMaxMb: section.mediaMaxMb,
     responsePrefix: section.responsePrefix,
+    keywordTriggers: section.keywordTriggers,
+    keywordMention: section.keywordMention,
   };
 
   if (accountId === DEFAULT_ACCOUNT_ID) {

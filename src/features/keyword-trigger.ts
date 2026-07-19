@@ -309,7 +309,7 @@ export function parseTriggerFromConfig(
       action: "passthrough",
       caseSensitive: false,
       enabled: true,
-    },
+    };
   }
 
   // 默认：精确匹配

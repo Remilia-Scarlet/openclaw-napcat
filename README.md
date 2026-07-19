@@ -164,6 +164,26 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 }
 ```
 
+> 注意：`keywordTriggers`（关键字触发，负责内容拦截 / 改写 / 映射命令）与下方的 `keywordMention`（群聊唤醒词，负责决定"要不要理这条消息"）是两个独立字段，互不冲突。
+
+---
+
+## 🗣️ 群聊唤醒词
+
+群聊中，消息默认只有 **@机器人** 才会被处理。配置 `keywordMention` 后，只要消息里**包含**其中任意一个关键词，即视为 @了机器人，会与 @机器人**并行生效**（匹配不区分大小写）：
+
+```json
+{
+  "keywordMention": ["AI助手", "小助手", "机器人"]
+}
+```
+
+例如群里发"机器人 帮我查下天气"，即使没有 @，也会被处理。
+
+> - 采用"包含"匹配，因此"这个机器人真好用"也会触发，请谨慎选择关键词。
+> - 唤醒词不会从文本中剔除，原文（去掉 @ 后）会原样发给 AI。
+> - 仅对群聊生效，私聊不需要唤醒。
+
 ---
 
 ## 🔔 群事件钩子
@@ -269,6 +289,7 @@ NapCat 反向 WS 配置示例：
         "defaultAction": "passthrough",
         "blocklist": []
       },
+      "keywordMention": ["AI助手", "小助手", "机器人"],
       "groupHooks": {
         "enabled": true,
         "defaultWelcome": { "type": "send_text", "text": "欢迎加入 🎉" }
@@ -304,6 +325,7 @@ NapCat 反向 WS 配置示例：
 | `security.auditLog` | 是否启用审计日志 | `true` |
 | `keywordTriggers.triggers` | 关键字触发规则列表 | `[]` |
 | `keywordTriggers.defaultAction` | 默认动作 | `passthrough` |
+| `keywordMention` | 群聊唤醒词列表，消息含其一即视为 @机器人（不区分大小写） | `[]` |
 | `groupHooks.enabled` | 是否启用群事件钩子 | `false` |
 | `longMessage.threshold` | 长消息阈值（字符数） | `300` |
 | `longMessage.mode` | 长消息处理模式 | `normal` |
