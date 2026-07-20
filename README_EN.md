@@ -15,6 +15,7 @@ Let your AI assistant fully control QQ interactions through natural language -- 
 - **@Mention Resolution** -- Recognizes `@QQNumber` in messages and maps to user IDs
 - **Group Management** -- Full admin toolkit: mute, kick, set admin, rename group, announcements
 - **Multi-Account** -- Supports multiple NapCat bot accounts
+- **Markdown Strip** -- QQ doesn't render Markdown; auto-converts `**bold**`, `## headings`, `|tables|`, etc. in AI replies to plain text
 
 ## Agent Tools
 
@@ -176,7 +177,8 @@ Add to your OpenClaw config (`openclaw config edit`):
       "dmPolicy": "allowlist",
       "allowFrom": ["friend_qq_number"],
       "groupPolicy": "allowlist",
-      "groupAllowFrom": ["group_number"]
+      "groupAllowFrom": ["group_number"],
+      "markdownStrip": true
     }
   }
 }
@@ -223,6 +225,7 @@ Add to your OpenClaw config (`openclaw config edit`):
 | `mediaMaxMb` | Max inbound media file size in MB | `5` |
 | `responsePrefix` | Prefix for AI reply messages (optional) | - |
 | `keywordMention` | Group activation keywords; a message containing any of them counts as an @mention (case-insensitive) | `[]` |
+| `markdownStrip` | Strip Markdown syntax from AI replies (QQ doesn't render Markdown) | `true` |
 | `enabled` | Enable/disable this account | `true` |
 
 **Important:** Set `tools.profile` to `"full"` in your OpenClaw config, otherwise `qq_*` tools will be filtered out by the default `"coding"` profile.
@@ -245,6 +248,41 @@ Once configured, just talk to your AI in QQ:
 
 When voice STT is enabled (`tools.media.audio.enabled: true`), voice messages are automatically transcribed to text before being sent to the AI model.
 
+## Markdown Strip
+
+QQ clients don't render Markdown, so syntax like `**bold**`, `## headings`, `` `code` ``, `|tables|`, `[links](url)` in AI replies would show as raw characters. This plugin converts Markdown to readable plain text before sending:
+
+| Syntax | Converted to | Notes |
+|--------|--------------|-------|
+| `**bold**` `*italic*` `~~strike~~` | `bold` `italic` `strike` | Markers removed, content kept |
+| `## heading` | `【heading】` | All heading levels |
+| `- list` `* list` `+ list` | `• list` | Unordered lists |
+| `1. list` | `1. list` | Ordered lists keep numbering |
+| `> quote` | `『quote』` | Per line |
+| `---` `***` `___` | `————` | Horizontal rules |
+| `[text](url)` | `text(url)` | Links keep URL |
+| `![alt](url)` | `alt(url)` | Images keep URL (no alt → `[图片]`) |
+| ```` ```code``` ```` | `code` | Code blocks: fence removed, content kept |
+| `` `code` `` | `code` | Inline code: backticks removed |
+
+> Code block and inline code contents are protected — internal `*`, `#` etc. are not processed.
+>
+> Tables go through Markdown strip first (cleaning emphasis/links inside cells), then SDK column alignment — so stripping happens before alignment for correct results.
+
+Enabled by default. To disable:
+
+```json
+{
+  "channels": {
+    "napcat": {
+      "markdownStrip": false
+    }
+  }
+}
+```
+
+Object form also supported: `"markdownStrip": { "enabled": false }`.
+
 ## Project Structure
 
 ```
@@ -262,7 +300,9 @@ When voice STT is enabled (`tools.media.audio.enabled: true`), voice messages ar
     ├── runtime.ts           # Runtime context
     ├── send.ts              # Outbound message sending
     ├── tools.ts             # 45 AI agent tools
-    └── types.ts             # TypeScript type definitions
+    ├── types.ts             # TypeScript type definitions
+    └── features/
+        └── markdown-strip.ts # Markdown syntax stripping (QQ adaptation)
 ```
 
 ## License

@@ -53,6 +53,7 @@ import type { OneBotMessageEvent, OneBotSegment } from "./types.js";
 import { sendGroupMsg, sendPrivateMsg, textSegment, replySegment, recordSegment, videoSegment, uploadGroupFile, uploadPrivateFile, getMsg } from "./api.js";
 import { getNapCatRuntime } from "./runtime.js";
 import { KeywordTriggerEngine } from "./features/keyword-trigger.js";
+import { stripMarkdownForQQ, resolveMarkdownStripConfig } from "./features/markdown-strip.js";
 
 export type NapCatRuntimeEnv = {
   log?: (message: string) => void;
@@ -701,7 +702,16 @@ async function deliverNapCatReply(params: {
 }): Promise<void> {
   const { payload, account, chatId, isGroup, runtime, core, config, statusSink } = params;
   const tableMode = (params.tableMode ?? "code") as any;
-  const text = core.channel.text.convertMarkdownTables(payload.text ?? "", tableMode);
+  const stripCfg = resolveMarkdownStripConfig(account.config.markdownStrip);
+  const stripped = stripCfg.enabled
+    ? stripMarkdownForQQ(payload.text ?? "")
+    : (payload.text ?? "");
+  let text = core.channel.text.convertMarkdownTables(stripped, tableMode);
+  if (stripCfg.enabled) {
+    // SDK bullets 模式给表头加 **bold**；strip 已清用户 markdown，
+    // 剩余的 ** 必来自 SDK，转为 【】 与标题风格统一
+    text = text.replace(/^\*\*(.+?)\*\*$/gm, "【$1】");
+  }
   const mediaUrls = resolveOutboundMediaUrls(payload);
 
   // In group chats, prepend a reply segment to quote the original message.

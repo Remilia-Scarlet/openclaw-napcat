@@ -50,6 +50,13 @@ export const NapCatChannelConfigSchema = {
         type: "array",
         items: { type: "string" },
       },
+      markdownStrip: {
+        type: ["object", "boolean"],
+        properties: {
+          enabled: { type: "boolean" },
+        },
+        additionalProperties: false,
+      },
       accounts: {
         type: "object",
         additionalProperties: true,
@@ -105,6 +112,11 @@ export const NapCatChannelConfigSchema = {
     keywordMention: {
       label: "群聊唤醒词",
       help: "群聊中，消息含这些关键词之一即视为 @机器人（与 @机器人 并行生效，不区分大小写）",
+    },
+    markdownStrip: {
+      label: "Markdown 剥离",
+      help: "QQ 不渲染 Markdown，开启后将 AI 回复中的 **加粗**、## 标题、|表格| 等转为纯文本。默认开启，设为 false 可关闭",
+      advanced: true,
     },
   },
 } as const;

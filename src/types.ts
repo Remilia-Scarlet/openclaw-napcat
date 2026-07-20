@@ -88,6 +88,12 @@ export type KeywordTriggerConfigInput = {
   blocklist?: string[];
 };
 
+/** Markdown strip configuration for QQ output. */
+export type MarkdownStripConfig = {
+  /** Whether to strip Markdown formatting from AI replies. Defaults to true. */
+  enabled?: boolean;
+};
+
 /** NapCat account configuration in openclaw.json. */
 export type NapCatAccountConfig = {
   /** Display name for this account. */
@@ -120,6 +126,11 @@ export type NapCatAccountConfig = {
    * keywords it is treated as if the bot was mentioned (case-insensitive).
    */
   keywordMention?: string[];
+  /**
+   * Strip Markdown formatting from AI replies (QQ doesn't render Markdown).
+   * Defaults to true. Set to false or { enabled: false } to disable.
+   */
+  markdownStrip?: MarkdownStripConfig | boolean;
 };
 
 export type NapCatConfig = {

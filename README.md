@@ -19,6 +19,7 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 - **📝 长消息策略** —— 三种模式：流式分段发送 / HTML 转图片 / 合并转发
 - **🎯 关键字触发** —— 支持精确/前缀/后缀/正则/包含多种匹配方式
 - **🔔 群事件钩子** —— 入群欢迎、退群通知、群管理等自动化响应
+- **✂️ Markdown 剥离** —— QQ 不渲染 Markdown，自动将 AI 回复中的 `**加粗**`、`## 标题`、`|表格|` 等转为纯文本
 
 ## Agent 工具列表（45 个）
 
@@ -215,6 +216,43 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 
 ---
 
+## ✂️ Markdown 剥离
+
+QQ 客户端不渲染 Markdown 语法，AI 回复里的 `**加粗**`、`## 标题`、`` `代码` ``、`|表格|`、`[链接](url)` 等会原样显示为乱码字符。本插件默认在发送前将 Markdown 转为可读的纯文本：
+
+| 语法 | 转换后 | 说明 |
+|------|--------|------|
+| `**加粗**` `*斜体*` `~~删除~~` | `加粗` `斜体` `删除` | 去标记保留内容 |
+| `## 标题` | `【标题】` | 1-6 级标题统一 |
+| `- 列表` `* 列表` `+ 列表` | `• 列表` | 无序列表 |
+| `1. 列表` | `1. 列表` | 有序列表保留序号 |
+| `> 引用` | `『引用』` | 逐行转换 |
+| `---` `***` `___` | `————` | 水平分割线 |
+| `[文字](url)` | `文字(url)` | 链接保留 URL |
+| `![alt](url)` | `alt(url)` | 图片保留 URL（无 alt 显示 `[图片]`） |
+| ```` ```代码``` ```` | `代码` | 代码块去围栏保留内容 |
+| `` `代码` `` | `代码` | 行内代码去反引号 |
+
+> 代码块和行内代码的内容会被保护，内部的 `*`、`#` 等不会被误处理。
+>
+> 表格会先经 Markdown 剥离（清理单元格内的强调/链接等），再用 SDK 对齐 `|` 列，保证对齐正确。
+
+默认开启，可在配置中关闭：
+
+```json
+{
+  "channels": {
+    "napcat": {
+      "markdownStrip": false
+    }
+  }
+}
+```
+
+也支持对象写法：`"markdownStrip": { "enabled": false }`。
+
+---
+
 ## 前置要求
 
 - [OpenClaw](https://github.com/openclaw/openclaw) >= 2026.3.14
@@ -299,7 +337,8 @@ NapCat 反向 WS 配置示例：
         "mode": "normal",
         "normalFlushChars": 160,
         "normalFlushIntervalMs": 1200
-      }
+      },
+      "markdownStrip": true
     }
   }
 }
@@ -332,6 +371,7 @@ NapCat 反向 WS 配置示例：
 | `longMessage.normalFlushChars` | normal模式每次发送字符数 | `160` |
 | `longMessage.normalFlushIntervalMs` | normal模式发送间隔（毫秒） | `1200` |
 | `longMessage.ogImageTheme` | og_image模式主题 | `default` |
+| `markdownStrip` | 是否剥离 AI 回复中的 Markdown 语法（QQ 不渲染） | `true` |
 
 **重要：** 需要在 OpenClaw 配置中将 `tools.profile` 设置为 `"full"`，否则 `qq_*` 工具会被默认的 `"coding"` profile 过滤掉。
 
@@ -364,7 +404,8 @@ NapCat 反向 WS 配置示例：
     └── features/
         ├── longmsg.ts       # 长消息处理（3种模式）
         ├── keyword-trigger.ts # 关键字触发引擎
-        └── group-hooks.ts   # 群事件钩子
+        ├── group-hooks.ts   # 群事件钩子
+        └── markdown-strip.ts # Markdown 语法剥离（QQ 适配）
 ```
 
 ## 许可证
