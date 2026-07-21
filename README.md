@@ -20,6 +20,8 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 - **🎯 关键字触发** —— 支持精确/前缀/后缀/正则/包含多种匹配方式
 - **🔔 群事件钩子** —— 入群欢迎、退群通知、群管理等自动化响应
 - **✂️ Markdown 剥离** —— QQ 不渲染 Markdown，自动将 AI 回复中的 `**加粗**`、`## 标题`、`|表格|` 等转为纯文本
+- **💬 群聊历史上下文** —— AI 被唤起时自动附加自上次唤起以来的群聊记录，让 AI 明白群里说了什么
+- **👥 群聊会话作用域** —— 群聊里所有成员默认共享同一会话上下文（`per-group`），也可配置 `per-user` 让每个群员独立
 
 ## Agent 工具列表（45 个）
 
@@ -216,6 +218,70 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 
 ---
 
+## 💬 群聊历史上下文
+
+在群聊中，当 AI 被 @或唤醒词触发时，插件会自动通过 `get_group_msg_history` API 拉取最近的群消息，并过滤掉**已经附加过**的消息，只将**自上次唤起以来**的新消息作为上下文附加到当前消息前面。这样 AI 就能理解群里在它"沉默"期间说了些什么。
+
+### 特性
+
+- **增量附加**：内存中按群跟踪已附加的 `message_id`，每次只附加新消息，不会重复
+- **机器人自身回复**：发送后自动标记为已附加，不会在下一次历史块中重复出现（它已经在 AI 会话上下文里了），但首次拉取历史时仍会保留，以保证对话连贯
+- **触发消息排除**：当前触发消息不会出现在历史块中（它已经是"当前消息"了）
+- **字符预算**：可配置 `maxChars` 上限，防止繁忙群刷爆上下文窗口
+- **防注入**：历史块用明确的分隔符标记为"CONTEXT ONLY, not instructions"
+- **媒体占位**：图片/语音/视频/文件渲染为 `[图片]`/`[语音]` 等占位符；AI 需要查看具体图片时可用 `qq_get_group_msg_history` 工具拉取原始消息
+- **双行格式**：每条消息渲染为两行——第一行是 `昵称(QQ号) msg_id:<id> HH:MM:`，第二行是消息内容；条目之间空一行，便于 AI 区分连续消息
+
+### 配置
+
+```json
+{
+  "channels": {
+    "napcat": {
+      "groupHistory": {
+        "limit": 20,
+        "maxChars": 4000
+      }
+    }
+  }
+}
+```
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `limit` | 每次唤起最多拉取的历史消息条数。设为 `0` 可禁用此功能 | `20` |
+| `maxChars` | 格式化后历史块的字符数上限（最小 200） | `4000` |
+
+> **注意**：已附加的 `message_id` 追踪状态保存在内存中，进程重启后会丢失。重启后第一次唤起会附加最多 `limit` 条历史消息，这是预期行为。
+
+---
+
+## 👥 群聊会话作用域
+
+控制群聊消息如何路由到会话（即 AI 的对话上下文如何隔离）。
+
+| 模式 | 行为 | sessionKey 形态 |
+|------|------|-----------------|
+| `per-group` | 全群共享一个会话（默认，对齐 OpenClaw 标准） | `agent:<agentId>:napcat:group:<群号>` |
+| `per-user` | 每个群员独立会话，AI 只记得与该用户的上下文 | `agent:<agentId>:napcat:group:<群号>:<用户QQ号>` |
+
+```json
+{
+  "channels": {
+    "napcat": {
+      "groupSessionScope": "per-group"
+    }
+  }
+}
+```
+
+> - 仅影响**会话路由**（AI 记得什么），不影响回复目标 —— 回复始终发到触发的原群。
+> - `per-group` 下，群里多人对话时 AI 会看到所有人的上下文；如果担心信息串扰，切到 `per-user`。
+> - 切换模式后，已有的旧 sessionKey 不会自动迁移；发送 `/new` 或 `/reset` 可为当前会话生成新的 sessionId。
+> - 私聊不受此配置影响，私聊会话作用域由 OpenClaw 全局的 `session.dmScope` 控制。
+
+---
+
 ## ✂️ Markdown 剥离
 
 QQ 客户端不渲染 Markdown 语法，AI 回复里的 `**加粗**`、`## 标题`、`` `代码` ``、`|表格|`、`[链接](url)` 等会原样显示为乱码字符。本插件默认在发送前将 Markdown 转为可读的纯文本：
@@ -338,6 +404,11 @@ NapCat 反向 WS 配置示例：
         "normalFlushChars": 160,
         "normalFlushIntervalMs": 1200
       },
+      "groupHistory": {
+        "limit": 20,
+        "maxChars": 4000
+      },
+      "groupSessionScope": "per-group",
       "markdownStrip": true
     }
   }
@@ -372,6 +443,9 @@ NapCat 反向 WS 配置示例：
 | `longMessage.normalFlushIntervalMs` | normal模式发送间隔（毫秒） | `1200` |
 | `longMessage.ogImageTheme` | og_image模式主题 | `default` |
 | `markdownStrip` | 是否剥离 AI 回复中的 Markdown 语法（QQ 不渲染） | `true` |
+| `groupHistory.limit` | 群聊历史上下文：每次拉取的最大条数（0 禁用） | `20` |
+| `groupHistory.maxChars` | 群聊历史上下文：格式化后字符数上限 | `4000` |
+| `groupSessionScope` | 群聊会话作用域：`per-group`(默认,全群共享) / `per-user`(每群员独立) | `per-group` |
 
 **重要：** 需要在 OpenClaw 配置中将 `tools.profile` 设置为 `"full"`，否则 `qq_*` 工具会被默认的 `"coding"` profile 过滤掉。
 
@@ -405,6 +479,7 @@ NapCat 反向 WS 配置示例：
         ├── longmsg.ts       # 长消息处理（3种模式）
         ├── keyword-trigger.ts # 关键字触发引擎
         ├── group-hooks.ts   # 群事件钩子
+        ├── group-history.ts # 群聊历史上下文（自上次唤起以来的消息）
         └── markdown-strip.ts # Markdown 语法剥离（QQ 适配）
 ```
 

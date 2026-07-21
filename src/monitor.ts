@@ -54,6 +54,11 @@ import { sendGroupMsg, sendPrivateMsg, textSegment, replySegment, recordSegment,
 import { getNapCatRuntime } from "./runtime.js";
 import { KeywordTriggerEngine } from "./features/keyword-trigger.js";
 import { stripMarkdownForQQ, resolveMarkdownStripConfig } from "./features/markdown-strip.js";
+import {
+  fetchAndFormatGroupHistory,
+  markGroupMessagesSeen,
+  resolveGroupHistoryConfig,
+} from "./features/group-history.js";
 
 export type NapCatRuntimeEnv = {
   log?: (message: string) => void;
@@ -571,7 +576,12 @@ async function processMessage(
     return;
   }
 
-  // Route resolution — group sessions are per-user so each sender has isolated context.
+  // Route resolution — groups share one session per group by default
+  // (aligned with OpenClaw standard `agent:<agentId>:napcat:group:<id>`).
+  // Set groupSessionScope: "per-user" to isolate each sender's context.
+  const groupScope = account.config.groupSessionScope ?? "per-group";
+  const groupPeerId =
+    isGroup && groupScope === "per-user" ? `${chatId}:${senderId}` : chatId;
   const fromLabel = isGroup ? `group:${chatId}` : senderName || `user:${senderId}`;
   const { route, buildEnvelope } = resolveInboundRouteEnvelopeBuilderWithRuntime({
     cfg: config,
@@ -579,7 +589,7 @@ async function processMessage(
     accountId: account.accountId,
     peer: {
       kind: isGroup ? "group" : "direct",
-      id: isGroup ? `${chatId}:${senderId}` : chatId,
+      id: isGroup ? groupPeerId : chatId,
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     runtime: core.channel as any,
@@ -595,6 +605,42 @@ async function processMessage(
     return;
   }
 
+  // ── Group chat history context ──────────────────────────────────
+  // For group triggers, fetch messages since the bot's last activation
+  // and pass them to the AI via BodyForAgent only. RawBody / Body /
+  // CommandBody stay as the original rawBody so the SDK's command
+  // detection and session management are unaffected.
+  let historyContext: string | undefined;
+  if (isGroup) {
+    const historyConfig = resolveGroupHistoryConfig(account.config.groupHistory);
+    if (historyConfig.limit > 0) {
+      // Mark the trigger message as seen so it won't appear in history.
+      markGroupMessagesSeen(chatId, [event.message_id]);
+      const historyStartedAt = Date.now();
+      const history = await fetchAndFormatGroupHistory({
+        httpApi: account.httpApi,
+        accessToken: account.accessToken,
+        groupId: Number(chatId),
+        config: historyConfig,
+        excludeMessageIds: [event.message_id],
+      });
+      if (history) {
+        historyContext = history.text;
+        runtime.log?.(
+          `[${account.accountId}] group history attached: ${history.count} msgs, ${history.text.length} chars, ${Date.now() - historyStartedAt}ms`,
+        );
+      }
+    }
+  }
+
+  // BodyForAgent = history + original body (only seen by the AI model).
+  // All other fields (Body, RawBody, CommandBody) use the original
+  // rawBody so the SDK's envelope / command / session pipeline is not
+  // disturbed by the prepended history block.
+  const bodyForAgent = historyContext
+    ? `${historyContext}\n\n${rawBody}`
+    : rawBody;
+
   const { storePath, body } = buildEnvelope({
     channel: "QQ",
     from: fromLabel,
@@ -605,7 +651,7 @@ async function processMessage(
   const targetPrefix = isGroup ? `napcat:group:${chatId}` : `napcat:${senderId}`;
   const ctxPayload = core.channel.reply.finalizeInboundContext({
     Body: body,
-    BodyForAgent: rawBody,
+    BodyForAgent: bodyForAgent,
     RawBody: rawBody,
     CommandBody: rawBody,
     From: targetPrefix,
@@ -739,13 +785,22 @@ async function deliverNapCatReply(params: {
   }
 
   // Helper: send a message via group or private.
+  // In group chats, the resulting message_id is marked as "seen" so it
+  // won't reappear in the next group-history context block (it's already
+  // in the agent's session as the bot's own reply). AI replies are still
+  // kept in history on first fetch — only the just-sent reply is skipped
+  // on the next trigger, avoiding redundant context.
   const send = async (segments: OneBotSegment[]) => {
     if (isGroup) {
-      await sendGroupMsg(account.httpApi, Number(chatId), segments, account.accessToken);
+      const result = await sendGroupMsg(account.httpApi, Number(chatId), segments, account.accessToken);
+      statusSink?.({ lastOutboundAt: Date.now() });
+      if (result?.message_id) {
+        markGroupMessagesSeen(chatId, [result.message_id]);
+      }
     } else {
       await sendPrivateMsg(account.httpApi, Number(chatId), segments, account.accessToken);
+      statusSink?.({ lastOutboundAt: Date.now() });
     }
-    statusSink?.({ lastOutboundAt: Date.now() });
   };
 
   // Add text (chunked if needed)

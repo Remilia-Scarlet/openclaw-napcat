@@ -57,6 +57,19 @@ export const NapCatChannelConfigSchema = {
         },
         additionalProperties: false,
       },
+      groupHistory: {
+        type: "object",
+        properties: {
+          limit: { type: "number", description: "Max messages to fetch per trigger (default 20, 0 disables)" },
+          maxChars: { type: "number", description: "Hard cap on formatted block length (default 4000)" },
+        },
+        additionalProperties: false,
+      },
+      groupSessionScope: {
+        type: "string",
+        enum: ["per-group", "per-user"],
+        description: "Group session routing: per-group (default, all members share one session) or per-user (each member gets isolated context)",
+      },
       accounts: {
         type: "object",
         additionalProperties: true,
@@ -116,6 +129,16 @@ export const NapCatChannelConfigSchema = {
     markdownStrip: {
       label: "Markdown 剥离",
       help: "QQ 不渲染 Markdown，开启后将 AI 回复中的 **加粗**、## 标题、|表格| 等转为纯文本。默认开启，设为 false 可关闭",
+      advanced: true,
+    },
+    groupHistory: {
+      label: "群聊历史上下文",
+      help: "AI 被唤起时，附加自上次唤起以来的群聊记录作为上下文。limit=条数(默认20,0禁用), maxChars=最大字符数(默认4000)",
+      advanced: true,
+    },
+    groupSessionScope: {
+      label: "群聊会话作用域",
+      help: "per-group(默认)=全群共享一个会话上下文; per-user=每个群员独立会话上下文。仅影响会话路由，回复始终发到原群",
       advanced: true,
     },
   },

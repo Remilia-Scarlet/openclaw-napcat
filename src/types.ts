@@ -94,6 +94,19 @@ export type MarkdownStripConfig = {
   enabled?: boolean;
 };
 
+/**
+ * Group chat history context config.
+ * When the bot is triggered in a group, recent unseen messages are
+ * fetched and prepended to the current message so the AI has context
+ * about what was said since its last activation.
+ */
+export type GroupHistoryConfig = {
+  /** Max messages to fetch per trigger. 0 disables. Defaults to 20. */
+  limit?: number;
+  /** Hard cap on the formatted block length (chars). Defaults to 4000. */
+  maxChars?: number;
+};
+
 /** NapCat account configuration in openclaw.json. */
 export type NapCatAccountConfig = {
   /** Display name for this account. */
@@ -131,6 +144,29 @@ export type NapCatAccountConfig = {
    * Defaults to true. Set to false or { enabled: false } to disable.
    */
   markdownStrip?: MarkdownStripConfig | boolean;
+  /**
+   * Group chat history context. When the bot is triggered in a group,
+   * recent unseen messages are prepended to the current message so the
+   * AI understands what was said since its last activation.
+   * Defaults to { limit: 20, maxChars: 4000 }. Set limit: 0 to disable.
+   */
+  groupHistory?: GroupHistoryConfig;
+  /**
+   * Group chat session scope. Controls how group messages are routed to
+   * sessions (and thus how the AI's conversation context is shared).
+   *
+   * - `per-group` (default, aligns with OpenClaw standard): all members
+   *   of a group share one session keyed by the group id
+   *   (`agent:<agentId>:napcat:group:<groupId>`). Everyone sees the same
+   *   ongoing conversation.
+   * - `per-user`: each member of a group gets an isolated session keyed
+   *   by `<groupId>:<senderId>`. Use this when you want the AI to keep
+   *   per-user context (e.g. personal assistant inside a group).
+   *
+   * Note: this only affects session routing; outbound replies always go
+   * to the originating group chat.
+   */
+  groupSessionScope?: "per-group" | "per-user";
 };
 
 export type NapCatConfig = {
