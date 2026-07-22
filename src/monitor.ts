@@ -54,6 +54,7 @@ import { sendGroupMsg, sendPrivateMsg, textSegment, replySegment, recordSegment,
 import { getNapCatRuntime } from "./runtime.js";
 import { KeywordTriggerEngine } from "./features/keyword-trigger.js";
 import { stripMarkdownForQQ, resolveMarkdownStripConfig } from "./features/markdown-strip.js";
+import { parseCQCodes } from "./features/cq-parse.js";
 import {
   fetchAndFormatGroupHistory,
   markGroupMessagesSeen,
@@ -811,8 +812,8 @@ async function deliverNapCatReply(params: {
       // First chunk gets reply-quote + images; subsequent chunks are plain text.
       const toSend =
         i === 0
-          ? [...replyPrefix, ...imageSegments, textSegment(chunks[i])]
-          : [textSegment(chunks[i])];
+          ? [...replyPrefix, ...imageSegments, ...parseCQCodes(chunks[i])]
+          : [...parseCQCodes(chunks[i])];
 
       try {
         await send(toSend);

@@ -16,6 +16,7 @@ Let your AI assistant fully control QQ interactions through natural language -- 
 - **Group Management** -- Full admin toolkit: mute, kick, set admin, rename group, announcements
 - **Multi-Account** -- Supports multiple NapCat bot accounts
 - **Markdown Strip** -- QQ doesn't render Markdown; auto-converts `**bold**`, `## headings`, `|tables|`, etc. in AI replies to plain text
+- **CQ Code Parsing** -- AI can write `[CQ:at,qq=QQNumber]` in replies to @mention group members; auto-splits into structured segments supporting all OneBot CQ types (`at`/`face`/`image`/`reply`...)
 
 ## Agent Tools
 
@@ -283,6 +284,48 @@ Enabled by default. To disable:
 
 Object form also supported: `"markdownStrip": { "enabled": false }`.
 
+## CQ Code Parsing (AI Reply @mentions)
+
+Under OneBot 11's array message format, plain text segments are literal — `[CQ:at,qq=xxx]` is not re-parsed. But AI replies are plain strings that cannot directly produce structured segments. The plugin ships a CQ code parser on all outbound paths: the AI simply writes `[CQ:at,qq=QQNumber]` in its reply text and the plugin splits it into the corresponding `at` segment.
+
+### Usage
+
+Embed CQ codes directly in AI replies:
+
+```
+[CQ:at,qq=123456789] Hello, welcome to the group!
+```
+
+The plugin splits it into:
+
+```
+[{type:"at", data:{qq:"123456789"}}, {type:"text", data:{text:" Hello, welcome to the group!"}}]
+```
+
+### Supported CQ Types
+
+The parser is generic — any `[CQ:type,key=val,...]` becomes a `{type, data:{...}}` segment. Examples:
+
+| CQ Code | Description | Example |
+|---------|-------------|---------|
+| `[CQ:at,qq=QQ]` | @mention someone | `[CQ:at,qq=123456789]` |
+| `[CQ:at,qq=all]` | @all members | `[CQ:at,qq=all]` |
+| `[CQ:face,id=ID]` | QQ emoji | `[CQ:face,id=5]` |
+| `[CQ:image,file=URL]` | Image | `[CQ:image,file=https://x.com/a.jpg]` |
+| `[CQ:reply,id=MSGID]` | Reply quote | `[CQ:reply,id=99]` |
+
+> Special characters in CQ values must be escaped: `[` → `&#91;`, `]` → `&#93;`, `,` → `&#44;`, `&` → `&amp;`. The parser unescapes them automatically.
+
+### Active Paths
+
+CQ parsing is active on all three send paths:
+
+- **AI group/private replies** (main path, with quote-reply and chunking)
+- **Channel outbound** (`sendMessageNapCat`)
+- **`qq_send_message` tool** (AI-initiated tool calls)
+
+> No configuration needed — enabled by default. Plain text without CQ codes behaves exactly as before.
+
 ## Project Structure
 
 ```
@@ -302,7 +345,8 @@ Object form also supported: `"markdownStrip": { "enabled": false }`.
     ├── tools.ts             # 45 AI agent tools
     ├── types.ts             # TypeScript type definitions
     └── features/
-        └── markdown-strip.ts # Markdown syntax stripping (QQ adaptation)
+        ├── markdown-strip.ts # Markdown syntax stripping (QQ adaptation)
+        └── cq-parse.ts       # CQ code parsing (AI reply @mentions)
 ```
 
 ## License

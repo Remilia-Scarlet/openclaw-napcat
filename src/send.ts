@@ -3,9 +3,9 @@ import { resolveNapCatAccount } from "./accounts.js";
 import {
   sendPrivateMsg,
   sendGroupMsg,
-  textSegment,
   imageSegment,
 } from "./api.js";
+import { parseCQCodes } from "./features/cq-parse.js";
 import type { OneBotSegment } from "./types.js";
 
 export type NapCatSendOptions = {
@@ -70,7 +70,7 @@ export async function sendMessageNapCat(
     segments.push(imageSegment(options.mediaUrl.trim()));
   }
   if (text?.trim()) {
-    segments.push(textSegment(text.slice(0, QQ_TEXT_LIMIT)));
+    segments.push(...parseCQCodes(text.slice(0, QQ_TEXT_LIMIT)));
   }
   if (segments.length === 0) {
     return { ok: false, error: "Empty message" };

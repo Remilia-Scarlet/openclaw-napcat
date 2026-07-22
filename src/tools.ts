@@ -1,5 +1,6 @@
 import type { ChannelAgentTool } from "openclaw/plugin-sdk";
-import { callOneBotApi, sendGroupMsg, sendPrivateMsg, textSegment, imageSegment, recordSegment, videoSegment, uploadGroupFile, uploadPrivateFile } from "./api.js";
+import { callOneBotApi, sendGroupMsg, sendPrivateMsg, imageSegment, recordSegment, videoSegment, uploadGroupFile, uploadPrivateFile } from "./api.js";
+import { parseCQCodes } from "./features/cq-parse.js";
 import { resolveNapCatAccount } from "./accounts.js";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 
@@ -690,7 +691,7 @@ export function createQQSendMessageTool(cfg: OpenClawConfig): ChannelAgentTool {
       // Text + image can be sent together
       const textImageSegments: import("./types.js").OneBotSegment[] = [];
       if (image_url?.trim()) textImageSegments.push(imageSegment(image_url.trim()));
-      if (text?.trim()) textImageSegments.push(textSegment(text.trim()));
+      if (text?.trim()) textImageSegments.push(...parseCQCodes(text.trim()));
       if (textImageSegments.length > 0) await send(textImageSegments);
 
       // Voice must be sent alone
