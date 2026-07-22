@@ -4,7 +4,42 @@
   "channels": ["napcat"],
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
+    "additionalProperties": true,
     "properties": {}
+  },
+  "channelConfigs": {
+    "napcat": {
+      "label": "QQ (NapCat)",
+      "description": "QQ messaging via NapCat OneBot 11 reverse WebSocket.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "httpApi": { "type": "string", "description": "NapCat OneBot 11 HTTP API URL" },
+          "accessToken": { "type": "string", "description": "OneBot 11 API auth token" },
+          "selfId": { "type": "string", "description": "Bot QQ number" },
+          "dmPolicy": { "type": "string", "enum": ["open", "pairing", "allowlist", "disabled"] },
+          "allowFrom": { "type": "array", "items": { "type": ["string", "number"] } },
+          "groupPolicy": { "type": "string", "enum": ["open", "allowlist", "disabled"] },
+          "groupAllowFrom": { "type": "array", "items": { "type": ["string", "number"] } },
+          "mediaMaxMb": { "type": "number" },
+          "responsePrefix": { "type": "string" },
+          "markdownStrip": { "type": ["object", "boolean"] },
+          "groupHistory": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "limit": { "type": "number" },
+              "maxChars": { "type": "number" }
+            }
+          },
+          "groupSessionScope": { "type": "string", "enum": ["per-group", "per-user"] },
+          "accounts": { "type": "object", "additionalProperties": true },
+          "defaultAccount": { "type": "string" }
+        }
+      }
+    }
   }
 }

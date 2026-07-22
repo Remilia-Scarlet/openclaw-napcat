@@ -70,6 +70,22 @@ export const NapCatChannelConfigSchema = {
         enum: ["per-group", "per-user"],
         description: "Group session routing: per-group (default, all members share one session) or per-user (each member gets isolated context)",
       },
+      aiTrigger: {
+        type: "object",
+        properties: {
+          enabled: { type: "boolean", description: "Enable AI-triggered replies for non-@bot group messages" },
+          baseUrl: { type: "string", description: "OpenAI-compatible API base URL (e.g. https://api.openai.com/v1)" },
+          apiKey: { type: "string", description: "API key for the LLM service" },
+          model: { type: "string", description: "Model ID (e.g. gpt-4o-mini)" },
+          recentMessages: { type: "number", description: "Number of recent messages to send to the model (default 20)" },
+          persona: { type: "string", description: "Bot persona description for the judgment prompt" },
+          cooldownMs: { type: "number", description: "Cooldown after bot's last reply in non-active mode (default 30000)" },
+          activeWindowMs: { type: "number", description: "Window after bot's last reply during which conversation is 'active' (default 180000)" },
+          maxJudgesPerMinute: { type: "number", description: "Max AI judgments per group per minute in non-active mode (default 60)" },
+          timeoutMs: { type: "number", description: "LLM call timeout in ms (default 3000)" },
+        },
+        additionalProperties: false,
+      },
       accounts: {
         type: "object",
         additionalProperties: true,
@@ -139,6 +155,11 @@ export const NapCatChannelConfigSchema = {
     groupSessionScope: {
       label: "群聊会话作用域",
       help: "per-group(默认)=全群共享一个会话上下文; per-user=每个群员独立会话上下文。仅影响会话路由，回复始终发到原群",
+      advanced: true,
+    },
+    aiTrigger: {
+      label: "AI 智能触发",
+      help: "用小模型判断群消息是否值得回复（无需@或唤醒词）。活跃对话中自动跳过冷却，保持高频互动连贯。需配置 baseUrl/apiKey/model",
       advanced: true,
     },
   },

@@ -6,7 +6,7 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 
 让 AI 助手通过自然语言完全控制 QQ 交互 —— 点赞、戳一戳、禁言、踢人、查看用户资料、管理群组等。
 
-> **v1.3.0 新增**：安全加固（频率限制/管理员权限/审计日志）、长消息处理策略（流式/HTML图片/合并转发）、关键字触发引擎、群事件钩子（入退群自动化响应）。
+> **v1.3.0 新增**：安全加固（频率限制/管理员权限/审计日志）、长消息处理策略（流式/HTML图片/合并转发）、关键字触发引擎、群事件钩子（入退群自动化响应）、AI 智能触发（小模型判断是否回复）。
 
 ## 功能特性
 
@@ -23,6 +23,7 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 - **📨 CQ 码解析** —— AI 回复文本中可写 `[CQ:at,qq=QQ号]` 来 @ 群成员，插件自动拆分为结构化消息段；支持 `at`/`face`/`image`/`reply` 等所有 OneBot CQ 类型
 - **💬 群聊历史上下文** —— AI 被唤起时自动附加自上次唤起以来的群聊记录，让 AI 明白群里说了什么
 - **👥 群聊会话作用域** —— 群聊里所有成员默认共享同一会话上下文（`per-group`），也可配置 `per-user` 让每个群员独立
+- **🧠 AI 智能触发** —— 无需 @或唤醒词，小模型自动判断群消息是否值得回复；活跃对话中自动跳过冷却，保持高频互动连贯
 
 ## Agent 工具列表（45 个）
 
@@ -283,6 +284,73 @@ OpenClaw 的 QQ 消息通道插件，基于 [NapCat](https://github.com/NapNeko/
 
 ---
 
+## 🧠 AI 智能触发
+
+群聊中，消息默认只有 **@机器人** 或命中 **唤醒词** 才会被处理。开启 AI 智能触发后，未命中的消息会交给一个便宜的小模型判断"这条消息是否值得我回复"，模拟真人的直觉决定是否介入对话。
+
+### 判断标准
+
+小模型会看到最近 N 条群消息（含机器人自己的回复），从以下角度判断：
+
+- 这条消息是否在问你问题、或对你说话
+- 这条消息是否是对你之前发言的回应（例如你刚解释了上海天气，有人接着问广州天气）
+- **你是否正在参与一个持续性对话** —— 如果是，且群友在继续相关话题，应该回复以保持对话连贯
+- 话题是否是你感兴趣或了解的
+- 发消息的人是否是你想互动的人
+
+### 活跃对话检测
+
+当机器人最近回复过（在 `activeWindowMs` 窗口内），视为**活跃对话**状态：
+
+- **活跃中**：跳过冷却和频率限制，直接进入 LLM 判断 —— 保证高频互动不被打断
+- **非活跃**：受冷却时间和每分钟频率限制约束
+
+### 错误降级
+
+LLM 调用超时或报错时，默认 **不触发**（skip）—— 机器人保持沉默而非对每条消息都回复。
+
+### 配置
+
+```json
+{
+  "channels": {
+    "napcat": {
+      "aiTrigger": {
+        "enabled": true,
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKey": "sk-xxx",
+        "model": "gpt-4o-mini",
+        "recentMessages": 20,
+        "persona": "一个友善的AI助手，对技术、游戏、日常聊天都感兴趣",
+        "cooldownMs": 30000,
+        "activeWindowMs": 180000,
+        "maxJudgesPerMinute": 60,
+        "timeoutMs": 3000
+      }
+    }
+  }
+}
+```
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `enabled` | 总开关 | `false` |
+| `baseUrl` | OpenAI 兼容 API 地址 | - |
+| `apiKey` | API key | - |
+| `model` | 模型 ID（如 `gpt-4o-mini`） | - |
+| `recentMessages` | 发送给小模型的消息条数 | `20` |
+| `persona` | 机器人人设描述 | `一个友善的AI助手` |
+| `cooldownMs` | 非活跃时的冷却时间（毫秒） | `30000` |
+| `activeWindowMs` | 活跃对话窗口（毫秒），窗口内跳过冷却 | `180000` |
+| `maxJudgesPerMinute` | 非活跃时每群每分钟最大判断次数 | `60` |
+| `timeoutMs` | LLM 调用超时（毫秒） | `3000` |
+
+> - 使用 OpenAI 兼容 API，支持任何兼容服务商（OpenAI、DeepSeek、Moonshot 等）
+> - 判断状态保存在内存中，进程重启后丢失（首次判断不受冷却限制）
+> - `persona` 会写入判断 prompt，影响小模型对"是否感兴趣"的判断
+
+---
+
 ## ✂️ Markdown 剥离
 
 QQ 客户端不渲染 Markdown 语法，AI 回复里的 `**加粗**`、`## 标题`、`` `代码` ``、`|表格|`、`[链接](url)` 等会原样显示为乱码字符。本插件默认在发送前将 Markdown 转为可读的纯文本：
@@ -454,7 +522,14 @@ NapCat 反向 WS 配置示例：
         "maxChars": 4000
       },
       "groupSessionScope": "per-group",
-      "markdownStrip": true
+      "markdownStrip": true,
+      "aiTrigger": {
+        "enabled": true,
+        "baseUrl": "https://api.openai.com/v1",
+        "apiKey": "sk-xxx",
+        "model": "gpt-4o-mini",
+        "persona": "一个友善的AI助手，对技术、游戏、日常聊天都感兴趣"
+      }
     }
   }
 }
@@ -491,6 +566,16 @@ NapCat 反向 WS 配置示例：
 | `groupHistory.limit` | 群聊历史上下文：每次拉取的最大条数（0 禁用） | `20` |
 | `groupHistory.maxChars` | 群聊历史上下文：格式化后字符数上限 | `4000` |
 | `groupSessionScope` | 群聊会话作用域：`per-group`(默认,全群共享) / `per-user`(每群员独立) | `per-group` |
+| `aiTrigger.enabled` | 是否开启 AI 智能触发（小模型判断是否回复未@消息） | `false` |
+| `aiTrigger.baseUrl` | OpenAI 兼容 API 地址 | - |
+| `aiTrigger.apiKey` | LLM 服务的 API key | - |
+| `aiTrigger.model` | 模型 ID | - |
+| `aiTrigger.recentMessages` | 发送给小模型的最近消息条数 | `20` |
+| `aiTrigger.persona` | 机器人人设描述 | `一个友善的AI助手` |
+| `aiTrigger.cooldownMs` | 非活跃时冷却时间（毫秒） | `30000` |
+| `aiTrigger.activeWindowMs` | 活跃对话窗口（毫秒），窗口内跳过冷却 | `180000` |
+| `aiTrigger.maxJudgesPerMinute` | 非活跃时每群每分钟最大判断次数 | `60` |
+| `aiTrigger.timeoutMs` | LLM 调用超时（毫秒） | `3000` |
 
 **重要：** 需要在 OpenClaw 配置中将 `tools.profile` 设置为 `"full"`，否则 `qq_*` 工具会被默认的 `"coding"` profile 过滤掉。
 
@@ -525,6 +610,7 @@ NapCat 反向 WS 配置示例：
         ├── keyword-trigger.ts # 关键字触发引擎
         ├── group-hooks.ts   # 群事件钩子
         ├── group-history.ts # 群聊历史上下文（自上次唤起以来的消息）
+        ├── ai-trigger.ts    # AI 智能触发（小模型判断是否回复）
         ├── markdown-strip.ts # Markdown 语法剥离（QQ 适配）
         └── cq-parse.ts      # CQ 码解析（AI 回复 @ 人）
 ```

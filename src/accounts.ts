@@ -40,6 +40,10 @@ function mergeNapCatAccountConfig(
     responsePrefix: section.responsePrefix,
     keywordTriggers: section.keywordTriggers,
     keywordMention: section.keywordMention,
+    markdownStrip: section.markdownStrip,
+    groupHistory: section.groupHistory,
+    groupSessionScope: section.groupSessionScope,
+    aiTrigger: section.aiTrigger,
   };
 
   if (accountId === DEFAULT_ACCOUNT_ID) {

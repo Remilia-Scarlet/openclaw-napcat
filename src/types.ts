@@ -107,6 +107,41 @@ export type GroupHistoryConfig = {
   maxChars?: number;
 };
 
+/**
+ * AI trigger config — uses a cheap small model to judge whether the bot
+ * should reply to a group message that didn't @bot or hit keywordMention.
+ *
+ * The model sees the last N messages (including bot's own replies) and
+ * decides if the current message is worth replying to, mimicking how a
+ * real person decides whether to engage.
+ *
+ * When the bot is in an "active conversation" (replied within
+ * `activeWindowMs`), cooldown and rate-limit are bypassed so the bot
+ * can participate in high-frequency back-and-forth without interruption.
+ */
+export type AiTriggerConfig = {
+  /** Master switch. Defaults to false. */
+  enabled?: boolean;
+  /** OpenAI-compatible API base URL (e.g. https://api.openai.com/v1). */
+  baseUrl?: string;
+  /** API key for the LLM service. */
+  apiKey?: SecretInput;
+  /** Model ID (e.g. "gpt-4o-mini"). */
+  model?: string;
+  /** Number of recent messages to send to the model. Defaults to 20. */
+  recentMessages?: number;
+  /** Bot persona description for the judgment prompt. */
+  persona?: string;
+  /** Cooldown after the bot's last reply (non-active mode). Defaults to 30000ms. */
+  cooldownMs?: number;
+  /** Window after bot's last reply during which conversation is "active". Defaults to 180000ms. */
+  activeWindowMs?: number;
+  /** Max AI judgments per group per minute (non-active mode). Defaults to 60. */
+  maxJudgesPerMinute?: number;
+  /** LLM call timeout. Defaults to 3000ms. */
+  timeoutMs?: number;
+};
+
 /** NapCat account configuration in openclaw.json. */
 export type NapCatAccountConfig = {
   /** Display name for this account. */
@@ -167,6 +202,12 @@ export type NapCatAccountConfig = {
    * to the originating group chat.
    */
   groupSessionScope?: "per-group" | "per-user";
+  /**
+   * AI trigger — uses a cheap small model to judge whether the bot should
+   * reply to group messages that didn't @bot or hit keywordMention.
+   * See {@link AiTriggerConfig} for details.
+   */
+  aiTrigger?: AiTriggerConfig;
 };
 
 export type NapCatConfig = {

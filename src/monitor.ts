@@ -60,6 +60,11 @@ import {
   markGroupMessagesSeen,
   resolveGroupHistoryConfig,
 } from "./features/group-history.js";
+import {
+  resolveAiTriggerConfig,
+  shouldTriggerAiReply,
+  markBotReply,
+} from "./features/ai-trigger.js";
 
 export type NapCatRuntimeEnv = {
   log?: (message: string) => void;
@@ -277,7 +282,7 @@ function isNapCatSenderAllowed(
   senderId: string,
   allowFrom: Array<string | number>,
 ): boolean {
-  return allowFrom.some((entry) => String(entry) === senderId);
+  return allowFrom.some((entry) => String(entry) === "*" || String(entry) === senderId);
 }
 
 /**
@@ -373,12 +378,35 @@ async function processMessage(
   const selfId = account.selfId || String(event.self_id);
 
   // In group chats, require an @bot mention OR one of the configured activation keywords.
+  // If neither matches, try AI trigger (small model judges whether to reply).
   if (
     isGroup &&
     !hasBotMention(event.message, selfId) &&
     !hasTriggerKeyword(event.message, account.config.keywordMention)
   ) {
-    return;
+    const aiConfig = resolveAiTriggerConfig(account.config.aiTrigger);
+    if (!aiConfig) return;
+
+    const triggerText = extractText(event.message);
+    if (!triggerText.trim()) return;
+
+    const botName = account.name || selfId;
+    const shouldReply = await shouldTriggerAiReply({
+      groupKey: chatId,
+      groupId: Number(chatId),
+      senderId,
+      senderName: senderName || senderId,
+      text: triggerText,
+      timestamp: event.time || Math.floor(Date.now() / 1000),
+      selfId,
+      botName,
+      httpApi: account.httpApi,
+      accessToken: account.accessToken,
+      config: aiConfig,
+      messageId: event.message_id,
+    });
+    if (!shouldReply) return;
+    // shouldReply=true → fall through to normal processing
   }
 
   // Strip @bot mention from message for processing
@@ -798,6 +826,7 @@ async function deliverNapCatReply(params: {
       if (result?.message_id) {
         markGroupMessagesSeen(chatId, [result.message_id]);
       }
+      markBotReply(chatId);
     } else {
       await sendPrivateMsg(account.httpApi, Number(chatId), segments, account.accessToken);
       statusSink?.({ lastOutboundAt: Date.now() });
