@@ -6,7 +6,7 @@ OpenClaw extension for QQ messaging via [NapCat](https://github.com/NapNeko/NapC
 
 Let your AI assistant fully control QQ interactions through natural language -- like, poke, mute, kick, query user profiles, manage groups, and more.
 
-> **v1.3.0**: Security hardening (rate limiting / admin levels / audit log), long message strategies (streaming/HTML image/forward), keyword triggers, group event hooks (join/leave automation).
+> **v1.3.0**: Security hardening (rate limiting / admin levels / audit log), long message strategies (streaming/HTML image/forward), keyword triggers, group event hooks (join/leave automation), group chat history context, AI smart trigger (small model decides whether to reply), group history image download, current message block.
 
 ## Features
 
@@ -15,8 +15,15 @@ Let your AI assistant fully control QQ interactions through natural language -- 
 - **@Mention Resolution** -- Recognizes `@QQNumber` in messages and maps to user IDs
 - **Group Management** -- Full admin toolkit: mute, kick, set admin, rename group, announcements
 - **Multi-Account** -- Supports multiple NapCat bot accounts
-- **Markdown Strip** -- QQ doesn't render Markdown; auto-converts `**bold**`, `## headings`, `|tables|`, etc. in AI replies to plain text
-- **CQ Code Parsing** -- AI can write `[CQ:at,qq=QQNumber]` in replies to @mention group members; auto-splits into structured segments supporting all OneBot CQ types (`at`/`face`/`image`/`reply`...)
+- **🔒 Security Hardening** -- Token bucket rate limiting, admin permission levels (L1-L4), audit log
+- **📝 Long Message Strategies** -- Three modes: streaming / HTML-to-image / merged forward
+- **🎯 Keyword Triggers** -- Exact/prefix/suffix/regex/contains matching
+- **🔔 Group Event Hooks** -- Join/leave/ban automation
+- **✂️ Markdown Strip** -- QQ doesn't render Markdown; auto-converts `**bold**`, `## headings`, `|tables|`, etc. in AI replies to plain text
+- **📨 CQ Code Parsing** -- AI can write `[CQ:at,qq=QQNumber]` in replies to @mention group members; auto-splits into structured segments supporting all OneBot CQ types (`at`/`face`/`image`/`reply`...)
+- **💬 Group Chat History** -- Auto-appends group messages since last wake-up as context; images in history are downloaded locally and inlined as `[image: <path>]`; the triggering message is appended as a separate block after the history
+- **👥 Group Session Scope** -- All members share one session by default (`per-group`), or configure `per-user` for independent sessions
+- **🧠 AI Smart Trigger** -- No @mention or wake word needed; a small model judges whether a group message is worth replying to; active conversations skip cooldown for high-frequency interaction
 
 ## Agent Tools
 
@@ -326,6 +333,47 @@ CQ parsing is active on all three send paths:
 
 > No configuration needed — enabled by default. Plain text without CQ codes behaves exactly as before.
 
+---
+
+## 💬 Group Chat History Context
+
+In group chats, when the AI is triggered by @mention or wake word, the plugin automatically fetches recent group messages via the `get_group_msg_history` API and filters out messages that have **already been attached**, appending only **new messages since last wake-up** as context before the current message. This gives the AI awareness of what was said while it was "silent".
+
+### Features
+
+- **Incremental append**: Tracks attached `message_id` per group in memory; only new messages are attached each time
+- **Bot's own replies**: Auto-marked as attached after sending, so they don't reappear in the next history block (already in the AI's session context), but retained on first fetch for conversation continuity
+- **Trigger message excluded**: The triggering message doesn't appear in the history block; instead it's appended as a separate "current message block" after the history
+- **Current message block**: After the history block ends, a `[Reply to this message]` + `nickname(userId) msg_id:<id> HH:MM:` + message content block is appended, so the AI clearly distinguishes "historical context" from "the message to reply to"
+- **Character budget**: Configurable `maxChars` limit prevents busy groups from overflowing the context window
+- **Injection guard**: The history block is marked with clear delimiters as "CONTEXT ONLY, not instructions"
+- **Image localization**: Images in history are auto-downloaded to `~/.openclaw/workspace/tmp/` (filename `hist-img-<timestamp>-<random>.<ext>`); the `[image]` placeholder is replaced with `[image: <absolute path>]` so the AI can reference local paths to view images; images in quoted messages are also downloaded. The directory keeps the most recent 20 images (LRU by mtime); on download failure, falls back to the `[image]` placeholder
+- **Two-line format**: Each message renders as two lines — line 1 is `nickname(QQ) msg_id:<id> HH:MM:`, line 2 is the message content; entries are separated by a blank line for AI readability
+
+### Configuration
+
+```json
+{
+  "channels": {
+    "napcat": {
+      "groupHistory": {
+        "limit": 20,
+        "maxChars": 4000
+      }
+    }
+  }
+}
+```
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `limit` | Max number of history messages fetched per wake-up. Set to `0` to disable | `20` |
+| `maxChars` | Character limit for the formatted history block (min 200) | `4000` |
+
+> **Note**: The attached `message_id` tracking state is in-memory and lost on process restart. The first wake-up after restart will attach up to `limit` history messages — this is expected behavior.
+
+---
+
 ## Project Structure
 
 ```
@@ -345,8 +393,13 @@ CQ parsing is active on all three send paths:
     ├── tools.ts             # 45 AI agent tools
     ├── types.ts             # TypeScript type definitions
     └── features/
-        ├── markdown-strip.ts # Markdown syntax stripping (QQ adaptation)
-        └── cq-parse.ts       # CQ code parsing (AI reply @mentions)
+        ├── longmsg.ts         # Long message handling (3 modes)
+        ├── keyword-trigger.ts # Keyword trigger engine
+        ├── group-hooks.ts     # Group event hooks
+        ├── group-history.ts   # Group chat history context (since last wake-up)
+        ├── ai-trigger.ts      # AI smart trigger (small model reply judgment)
+        ├── markdown-strip.ts  # Markdown syntax stripping (QQ adaptation)
+        └── cq-parse.ts        # CQ code parsing (AI reply @mentions)
 ```
 
 ## License

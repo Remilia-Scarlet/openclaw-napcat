@@ -37,6 +37,14 @@
 import { callOneBotApi } from "../api.js";
 import type { OneBotSegment } from "../types.js";
 
+/**
+ * Downloads an image from the given URL and persists it to local disk.
+ * Returns the absolute file path of the saved image, or `undefined` on
+ * failure. Used by `fetchAndFormatGroupHistory` to inline image paths
+ * into the formatted history block.
+ */
+export type HistoryImageDownloader = (url: string) => Promise<string | undefined>;
+
 // ──────────────────────────── Config ────────────────────────────
 
 export interface GroupHistoryConfig {
@@ -171,8 +179,14 @@ export async function fetchAndFormatGroupHistory(params: {
   config: ResolvedGroupHistoryConfig;
   /** Message ids to exclude from the formatted output (e.g. the trigger msg). */
   excludeMessageIds?: number[];
+  /**
+   * Optional image downloader. When provided, image segments in history
+   * entries are downloaded and rendered as `[图片：<path>]` instead of
+   * the bare `[图片]` placeholder. Failures fall back to `[图片]`.
+   */
+  downloadImage?: HistoryImageDownloader;
 }): Promise<FormattedGroupHistory | undefined> {
-  const { httpApi, accessToken, groupId, config, excludeMessageIds } = params;
+  const { httpApi, accessToken, groupId, config, excludeMessageIds, downloadImage } = params;
   if (config.limit <= 0) return undefined;
 
   const groupKey = String(groupId);
@@ -227,20 +241,19 @@ export async function fetchAndFormatGroupHistory(params: {
       const senderName = (sender?.card as string) || (sender?.nickname as string) || String(userId);
 
       const segments = Array.isArray(m.message) ? (m.message as OneBotSegment[]) : undefined;
-      const text = segments
+      const extracted = segments
         ? extractTextFromSegments(segments)
-        : typeof m.raw_message === "string"
-          ? m.raw_message.trim()
-          : "";
+        : { text: typeof m.raw_message === "string" ? m.raw_message.trim() : "", imageUrls: [] as string[] };
 
       // Skip entries with no human-readable content.
-      if (!text) continue;
+      if (!extracted.text) continue;
 
       entries.push({
         messageId,
         userId,
         senderName,
-        text,
+        text: extracted.text,
+        imageUrls: extracted.imageUrls,
         timestamp: toNumber(m.time) || 0,
       });
     }
@@ -266,6 +279,34 @@ export async function fetchAndFormatGroupHistory(params: {
 
     if (entries.length === 0) return undefined;
 
+    // Download images and substitute `[图片]` placeholders with local
+    // file paths. Downloads run in parallel across unique URLs; any
+    // failure falls back to the bare `[图片]` placeholder.
+    if (downloadImage) {
+      const uniqueUrls = [...new Set(entries.flatMap((e) => e.imageUrls))];
+      if (uniqueUrls.length > 0) {
+        const pathMap = new Map<string, string | undefined>();
+        await Promise.all(
+          uniqueUrls.map(async (url) => {
+            try {
+              pathMap.set(url, await downloadImage(url));
+            } catch {
+              pathMap.set(url, undefined);
+            }
+          }),
+        );
+        for (const entry of entries) {
+          if (entry.imageUrls.length === 0) continue;
+          let imgIdx = 0;
+          entry.text = entry.text.replace(/\[图片\]/g, () => {
+            const url = entry.imageUrls[imgIdx++];
+            const localPath = url ? pathMap.get(url) : undefined;
+            return localPath ? `[图片：${localPath}]` : "[图片]";
+          });
+        }
+      }
+    }
+
     return formatEntries(entries, config.maxChars);
   } catch {
     // Network/API errors are non-fatal — just skip history this turn.
@@ -290,6 +331,8 @@ interface HistoryEntry {
   userId: number;
   senderName: string;
   text: string;
+  /** Image URLs in the order their `[图片]` placeholders appear in `text`. */
+  imageUrls: string[];
   timestamp: number;
 }
 
@@ -307,9 +350,14 @@ function toNumber(v: unknown): number {
  * Reply segments are dropped (noise in history); media becomes a
  * short placeholder so the AI knows something was shared without
  * pulling the actual binary into context.
+ *
+ * Image segments produce a `[图片]` placeholder and their URL is
+ * collected in `imageUrls` (in order) so the caller can download
+ * them and substitute the placeholder with a local file path.
  */
-function extractTextFromSegments(segments: OneBotSegment[]): string {
+function extractTextFromSegments(segments: OneBotSegment[]): { text: string; imageUrls: string[] } {
   const parts: string[] = [];
+  const imageUrls: string[] = [];
   for (const seg of segments) {
     switch (seg.type) {
       case "text":
@@ -318,9 +366,12 @@ function extractTextFromSegments(segments: OneBotSegment[]): string {
       case "at":
         parts.push(`@${seg.data.qq ?? "?"}`);
         break;
-      case "image":
+      case "image": {
+        const url = seg.data.url ?? seg.data.file ?? "";
+        if (url) imageUrls.push(url);
         parts.push("[图片]");
         break;
+      }
       case "face":
         parts.push("[表情]");
         break;
@@ -336,7 +387,7 @@ function extractTextFromSegments(segments: OneBotSegment[]): string {
       // reply / json / xml / poke / dice / rps / music / node: omitted
     }
   }
-  return parts.join("").trim();
+  return { text: parts.join("").trim(), imageUrls };
 }
 
 function formatTime(timestamp: number): string {
@@ -394,4 +445,29 @@ function formatEntries(
   lines.push(HISTORY_FOOTER);
 
   return { text: lines.join("\n"), count };
+}
+
+const REPLY_MARKER = "[Reply to this message]";
+
+/**
+ * Format the trigger message as a "reply to this message" block,
+ * mirroring the 2-line entry format used for history entries:
+ *
+ *   [Reply to this message]
+ *   senderName(userId) msg_id:<id> HH:MM:
+ *   <text>
+ *
+ * Intended to be appended right after `HISTORY_FOOTER` so the model
+ * sees the message it should reply to in the same format as the
+ * preceding history entries.
+ */
+export function formatCurrentMessageBlock(params: {
+  senderName: string;
+  userId: string | number;
+  messageId: string | number;
+  timestamp: number;
+  text: string;
+}): string {
+  const time = formatTime(params.timestamp);
+  return `${REPLY_MARKER}\n${params.senderName}(${params.userId}) msg_id:${params.messageId} ${time}:\n${params.text}`;
 }

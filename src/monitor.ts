@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import type { IncomingMessage } from "node:http";
 import { execFile } from "node:child_process";
-import { writeFile, unlink } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { writeFile, unlink, mkdir, readdir, stat } from "node:fs/promises";
+import { tmpdir, homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 import { resolveDirectDmAuthorizationOutcome, resolveSenderCommandAuthorizationWithRuntime } from "openclaw/plugin-sdk/command-auth";
@@ -57,8 +57,10 @@ import { stripMarkdownForQQ, resolveMarkdownStripConfig } from "./features/markd
 import { parseCQCodes } from "./features/cq-parse.js";
 import {
   fetchAndFormatGroupHistory,
+  formatCurrentMessageBlock,
   markGroupMessagesSeen,
   resolveGroupHistoryConfig,
+  type HistoryImageDownloader,
 } from "./features/group-history.js";
 import {
   resolveAiTriggerConfig,
@@ -137,17 +139,23 @@ async function fetchQuotedMessageText(
   httpApi: string,
   messageId: number,
   accessToken?: string,
+  downloadImage?: HistoryImageDownloader,
 ): Promise<string | undefined> {
   try {
     const msg = await getMsg(httpApi, messageId, accessToken);
     const senderName =
       (msg.sender.card as string) || (msg.sender.nickname as string) || String(msg.sender.user_id ?? "unknown");
-    // Extract text from the quoted message segments
+    // Extract text from the quoted message segments, collecting image URLs.
+    const imageUrls: string[] = [];
     const quotedText = msg.message
       .map((s) => {
         if (s.type === "text") return s.data.text ?? "";
         if (s.type === "at") return `@${s.data.qq}`;
-        if (s.type === "image") return "[图片]";
+        if (s.type === "image") {
+          const url = s.data.url ?? s.data.file ?? "";
+          if (url) imageUrls.push(url);
+          return "[图片]";
+        }
         if (s.type === "face") return "[表情]";
         if (s.type === "record") return "[语音]";
         if (s.type === "video") return "[视频]";
@@ -157,7 +165,27 @@ async function fetchQuotedMessageText(
       .join("")
       .trim();
     if (!quotedText) return undefined;
-    return `[引用 ${senderName} 的消息: ${quotedText}]`;
+
+    // Download quoted images and substitute `[图片]` → `[图片：<path>]`.
+    let resolved = quotedText;
+    if (downloadImage && imageUrls.length > 0) {
+      const paths = await Promise.all(
+        imageUrls.map(async (url) => {
+          try {
+            return await downloadImage(url);
+          } catch {
+            return undefined;
+          }
+        }),
+      );
+      let imgIdx = 0;
+      resolved = quotedText.replace(/\[图片\]/g, () => {
+        const localPath = paths[imgIdx++];
+        return localPath ? `[图片：${localPath}]` : "[图片]";
+      });
+    }
+
+    return `[引用 ${senderName} 的消息: ${resolved}]`;
   } catch {
     return undefined;
   }
@@ -249,6 +277,103 @@ async function downloadAndConvertToWav(
       },
     );
   });
+}
+
+/** Map a Content-Type header value to a file extension (e.g. "image/png" → ".png"). */
+function extFromContentType(contentType: string): string {
+  const mt = contentType.split(";")[0].trim().toLowerCase();
+  switch (mt) {
+    case "image/jpeg":
+    case "image/jpg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/gif":
+      return ".gif";
+    case "image/webp":
+      return ".webp";
+    case "image/bmp":
+      return ".bmp";
+    case "image/tiff":
+      return ".tiff";
+    default:
+      return "";
+  }
+}
+
+/** Filename prefix for downloaded group-history images (used for pruning). */
+const HISTORY_IMAGE_PREFIX = "hist-img-";
+/** Max number of history images to keep in the tmp dir (LRU by mtime). */
+const HISTORY_IMAGE_MAX_COUNT = 20;
+
+/**
+ * Prune downloaded history images in `dir` so that at most
+ * `HISTORY_IMAGE_MAX_COUNT` files with the `hist-img-` prefix remain.
+ * The oldest (by mtime) are deleted first. Only files matching the
+ * prefix are touched, so other files in the directory are left alone.
+ * Errors are swallowed — pruning is best-effort.
+ */
+async function pruneHistoryImages(dir: string): Promise<void> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+  const candidates = names.filter((n) => n.startsWith(HISTORY_IMAGE_PREFIX));
+  if (candidates.length <= HISTORY_IMAGE_MAX_COUNT) return;
+
+  const stamped = await Promise.all(
+    candidates.map(async (n) => {
+      try {
+        const st = await stat(resolve(dir, n));
+        return { name: n, mtime: st.mtimeMs };
+      } catch {
+        return { name: n, mtime: 0 };
+      }
+    }),
+  );
+  // Oldest first; mtimeMs=0 (stat failed) sorts to the front → deleted.
+  stamped.sort((a, b) => a.mtime - b.mtime);
+  const dropCount = stamped.length - HISTORY_IMAGE_MAX_COUNT;
+  for (let i = 0; i < dropCount; i++) {
+    await unlink(resolve(dir, stamped[i].name)).catch(() => {});
+  }
+}
+
+/**
+ * Create an image downloader for group history entries. Downloads
+ * images via the SDK media fetcher and persists them to
+ * `~/.openclaw/workspace/tmp/` so the AI can reference local paths.
+ * Returns `undefined` on failure (the caller falls back to `[图片]`).
+ * After each successful save, prunes the directory to the most recent
+ * `HISTORY_IMAGE_MAX_COUNT` images (by mtime).
+ */
+function createHistoryImageDownloader(
+  account: ResolvedNapCatAccount,
+  core: NapCatCoreRuntime,
+  runtime: NapCatRuntimeEnv,
+): HistoryImageDownloader {
+  const tmpDir = resolve(homedir(), ".openclaw", "workspace", "tmp");
+  return async (url: string): Promise<string | undefined> => {
+    try {
+      const mediaMaxMb = account.config.mediaMaxMb ?? 5;
+      const maxBytes = mediaMaxMb * 1024 * 1024;
+      const fetched = await core.channel.media.fetchRemoteMedia({ url, maxBytes });
+      const ext = extFromContentType(fetched.contentType) || getFileExtension(url) || ".jpg";
+      const filename = `${HISTORY_IMAGE_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+      await mkdir(tmpDir, { recursive: true });
+      const filePath = resolve(tmpDir, filename);
+      await writeFile(filePath, fetched.buffer);
+      // Best-effort LRU prune; the just-saved file has the newest mtime
+      // so it is never deleted here.
+      await pruneHistoryImages(tmpDir).catch(() => {});
+      return filePath;
+    } catch (err) {
+      runtime.error?.(`[${account.accountId}] Failed to download history image: ${String(err)}`);
+      return undefined;
+    }
+  };
 }
 
 /** Check if the message contains an @bot mention. */
@@ -444,6 +569,7 @@ async function processMessage(
       account.httpApi,
       replyMsgId,
       account.accessToken,
+      createHistoryImageDownloader(account, core, runtime),
     );
     if (quotedText) {
       text = quotedText + "\n" + text;
@@ -652,6 +778,7 @@ async function processMessage(
         groupId: Number(chatId),
         config: historyConfig,
         excludeMessageIds: [event.message_id],
+        downloadImage: createHistoryImageDownloader(account, core, runtime),
       });
       if (history) {
         historyContext = history.text;
@@ -662,12 +789,18 @@ async function processMessage(
     }
   }
 
-  // BodyForAgent = history + original body (only seen by the AI model).
+  // BodyForAgent = history + current message block (only seen by the AI model).
   // All other fields (Body, RawBody, CommandBody) use the original
   // rawBody so the SDK's envelope / command / session pipeline is not
   // disturbed by the prepended history block.
   const bodyForAgent = historyContext
-    ? `${historyContext}\n\n${rawBody}`
+    ? `${historyContext}\n${formatCurrentMessageBlock({
+        senderName: senderName || senderId,
+        userId: senderId,
+        messageId: event.message_id,
+        timestamp: event.time,
+        text: rawBody,
+      })}`
     : rawBody;
 
   const { storePath, body } = buildEnvelope({
