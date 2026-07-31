@@ -522,6 +522,7 @@ async function processMessage(
       senderId,
       senderName: senderName || senderId,
       text: triggerText,
+      messageSegments: event.message,
       timestamp: event.time || Math.floor(Date.now() / 1000),
       selfId,
       botName,

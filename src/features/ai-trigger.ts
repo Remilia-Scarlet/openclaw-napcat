@@ -258,7 +258,7 @@ async function fetchRecentHistory(params: {
 
     const segments = Array.isArray(m.message) ? (m.message as OneBotSegment[]) : undefined;
     const text = segments
-      ? extractTextFromSegments(segments)
+      ? await extractTextFromSegments(segments, { httpApi, accessToken, groupId })
       : typeof m.raw_message === "string"
         ? m.raw_message.trim()
         : "";
@@ -277,17 +277,77 @@ async function fetchRecentHistory(params: {
   return result;
 }
 
+// ──────────────────────────── Member Name Resolution ────────────────────────────
+
+const MEMBER_NAME_CACHE_TTL_MS = 5 * 60 * 1000;
+const MEMBER_NAME_CACHE_MAX = 1000;
+
+const memberNameCache = new Map<string, { name: string; expireAt: number }>();
+
+/**
+ * Resolve a group member's display name (card > nickname > userId) with
+ * in-memory caching. The small model judges whether to reply based on
+ * @mentions in messages — showing "@昵称" instead of "@qq号" helps it
+ * understand who is being addressed.
+ *
+ * Falls back to the raw userId on any error.
+ */
+async function resolveMemberName(params: {
+  httpApi: string;
+  accessToken?: string;
+  groupId: number;
+  userId: string;
+}): Promise<string> {
+  const { httpApi, accessToken, groupId, userId } = params;
+
+  if (userId === "all") return "全体成员";
+
+  const cacheKey = `${groupId}:${userId}`;
+  const cached = memberNameCache.get(cacheKey);
+  if (cached && cached.expireAt > Date.now()) return cached.name;
+
+  try {
+    const resp = await callOneBotApi<{ card?: string; nickname?: string }>(
+      httpApi,
+      "get_group_member_info",
+      { group_id: groupId, user_id: Number(userId), no_cache: false },
+      { accessToken, timeoutMs: 3_000 },
+    );
+    const name = (resp.data?.card as string) || (resp.data?.nickname as string) || userId;
+    memberNameCache.set(cacheKey, { name, expireAt: Date.now() + MEMBER_NAME_CACHE_TTL_MS });
+    evictOldestKeys(memberNameCache, MEMBER_NAME_CACHE_MAX);
+    return name;
+  } catch {
+    // API failure — fall back to raw userId so the message still renders.
+    return userId;
+  }
+}
+
 /** Render OneBot segments as readable text (simplified from group-history.ts). */
-function extractTextFromSegments(segments: OneBotSegment[]): string {
+async function extractTextFromSegments(
+  segments: OneBotSegment[],
+  context?: { httpApi: string; accessToken?: string; groupId: number },
+): Promise<string> {
   const parts: string[] = [];
   for (const seg of segments) {
     switch (seg.type) {
       case "text":
         parts.push(seg.data.text ?? "");
         break;
-      case "at":
-        parts.push(`@${seg.data.qq ?? "?"}`);
+      case "at": {
+        const qq = seg.data.qq ?? "?";
+        // Prefer the name carried in the at segment itself; fall back to
+        // a group-member lookup so the small model sees "@昵称" not "@qq号".
+        if (seg.data.name) {
+          parts.push(`@${seg.data.name}`);
+        } else if (context && qq !== "?") {
+          const name = await resolveMemberName({ ...context, userId: qq });
+          parts.push(`@${name}`);
+        } else {
+          parts.push(`@${qq}`);
+        }
         break;
+      }
       case "image":
         parts.push("[图片]");
         break;
@@ -529,6 +589,10 @@ export async function shouldTriggerAiReply(params: {
   senderId: string;
   senderName: string;
   text: string;
+  /** Raw message segments — when provided, @mentions are re-rendered as
+   *  "@昵称" (via group-member lookup) so the small model knows who is
+   *  being addressed instead of seeing opaque QQ numbers. */
+  messageSegments?: OneBotSegment[];
   timestamp: number;
   selfId: string;
   botName: string;
@@ -543,6 +607,7 @@ export async function shouldTriggerAiReply(params: {
     senderId,
     senderName,
     text,
+    messageSegments,
     timestamp,
     selfId,
     botName,
@@ -552,7 +617,17 @@ export async function shouldTriggerAiReply(params: {
     messageId,
   } = params;
 
-  if (!text.trim()) return false;
+  // Re-render the current message with @昵称 instead of @qq号 when raw
+  // segments are available; otherwise fall back to the provided text.
+  let currentText = text;
+  if (messageSegments && messageSegments.length > 0) {
+    try {
+      currentText = await extractTextFromSegments(messageSegments, { httpApi, accessToken, groupId });
+    } catch {
+      // keep currentText = text
+    }
+  }
+  if (!currentText.trim()) return false;
 
   const s = getGroupState(groupKey);
 
@@ -584,11 +659,11 @@ export async function shouldTriggerAiReply(params: {
   const userPrompt = buildUserPrompt(historyText, {
     senderName,
     senderId,
-    text,
+    text: currentText,
     timestamp,
   });
 
-  const result = await callLlmJudge({ config, systemPrompt, userPrompt, currentMessage: { senderName, text } });
+  const result = await callLlmJudge({ config, systemPrompt, userPrompt, currentMessage: { senderName, text: currentText } });
 
   if (result?.reply === true) {
     return true;
