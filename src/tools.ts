@@ -1,8 +1,8 @@
-import type { ChannelAgentTool } from "openclaw/plugin-sdk";
+import type { ChannelAgentTool } from "openclaw/plugin-sdk/core";
 import { callOneBotApi, sendGroupMsg, sendPrivateMsg, imageSegment, recordSegment, videoSegment, uploadGroupFile, uploadPrivateFile } from "./api.js";
 import { parseCQCodes } from "./features/cq-parse.js";
 import { resolveNapCatAccount } from "./accounts.js";
-import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/core";
 
 // ---------------------------------------------------------------------------
 // Helpers — plain JSON Schema objects (no typebox to avoid jiti dual-instance)

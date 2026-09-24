@@ -22,7 +22,7 @@ import {
 } from "openclaw/plugin-sdk/core";
 
 // SDK imports - matrix
-import { chunkTextForOutbound } from "openclaw/plugin-sdk/matrix";
+import { chunkTextForOutbound } from "openclaw/plugin-sdk/text-chunking";
 
 // SDK imports - reply-payload
 import { isNumericTargetId, sendPayloadWithChunkedTextAndMedia } from "openclaw/plugin-sdk/reply-payload";
